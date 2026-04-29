@@ -1,4 +1,24 @@
+bl_info = {
+    "name": "Remove Unused Empty Materials",
+    "author": "khk1997",
+    "version": (1, 0, 0),
+    "blender": (3, 0, 0),
+    "location": "Properties > Material > Material Slot Cleanup",
+    "description": "Remove unused and empty material slots from selected mesh objects.",
+    "category": "Material",
+}
+
 import bpy
+from bpy.props import BoolProperty, PointerProperty
+from bpy.types import Operator, Panel, PropertyGroup
+
+
+class MaterialSlotCleanupSettings(PropertyGroup):
+    purge_orphan_data: BoolProperty(
+        name="Purge Orphan Data",
+        description="Also remove unused orphan data after cleaning material slots",
+        default=True,
+    )
 
 
 def clean_material_slots(obj):
@@ -20,7 +40,7 @@ def clean_material_slots(obj):
                 break
 
     if len(keep_indices) == len(old_materials):
-        return
+        return False
 
     index_map = {
         old_index: new_index
@@ -36,41 +56,105 @@ def clean_material_slots(obj):
     for polygon, old_index in zip(mesh.polygons, old_polygon_indices):
         polygon.material_index = index_map.get(old_index, 0)
 
+    return True
 
-# Keep current selection so we can restore it after cleanup.
-selected_objects = list(bpy.context.selected_objects)
-active_object = bpy.context.view_layer.objects.active
 
-# Make sure we are in Object Mode.
-if bpy.ops.object.mode_set.poll():
-    bpy.ops.object.mode_set(mode="OBJECT")
+def purge_orphan_data():
+    for _ in range(5):
+        bpy.ops.outliner.orphans_purge(
+            do_local_ids=True,
+            do_linked_ids=True,
+            do_recursive=True,
+        )
 
-for obj in selected_objects:
-    if obj.type != "MESH":
-        continue
 
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+class MATERIAL_OT_clean_unused_empty_slots(Operator):
+    bl_idname = "material.clean_unused_empty_slots"
+    bl_label = "Clean Material Slots"
+    bl_description = "Clean unused and empty material slots on selected mesh objects"
+    bl_options = {"REGISTER", "UNDO"}
 
-    clean_material_slots(obj)
+    def execute(self, context):
+        selected_objects = list(context.selected_objects)
+        active_object = context.view_layer.objects.active
+        mesh_objects = [obj for obj in selected_objects if obj.type == "MESH"]
 
-# Restore original selection.
-bpy.ops.object.select_all(action="DESELECT")
-for obj in selected_objects:
-    if obj.name in bpy.context.scene.objects:
-        obj.select_set(True)
+        if not mesh_objects:
+            self.report({"WARNING"}, "No selected mesh objects to clean.")
+            return {"CANCELLED"}
 
-if active_object and active_object.name in bpy.context.scene.objects:
-    bpy.context.view_layer.objects.active = active_object
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode="OBJECT")
 
-# Purge unused orphan data.
-# Repeat a few times because removing one data block can orphan another.
-for _ in range(5):
-    bpy.ops.outliner.orphans_purge(
-        do_local_ids=True,
-        do_linked_ids=True,
-        do_recursive=True
+        changed_count = 0
+        for obj in mesh_objects:
+            bpy.ops.object.select_all(action="DESELECT")
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+
+            if clean_material_slots(obj):
+                changed_count += 1
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in selected_objects:
+            if obj.name in context.scene.objects:
+                obj.select_set(True)
+
+        if active_object and active_object.name in context.scene.objects:
+            context.view_layer.objects.active = active_object
+
+        settings = context.scene.material_slot_cleanup_settings
+        if settings.purge_orphan_data:
+            purge_orphan_data()
+
+        self.report(
+            {"INFO"},
+            f"Cleaned {changed_count} of {len(mesh_objects)} selected mesh object(s).",
+        )
+        return {"FINISHED"}
+
+
+class MATERIAL_PT_slot_cleanup(Panel):
+    bl_label = "Material Slot Cleanup"
+    bl_idname = "MATERIAL_PT_slot_cleanup"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "material"
+    bl_order = -1
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.material_slot_cleanup_settings
+
+        layout.prop(settings, "purge_orphan_data")
+        layout.operator(
+            MATERIAL_OT_clean_unused_empty_slots.bl_idname,
+            icon="BRUSH_DATA",
+        )
+
+
+classes = (
+    MaterialSlotCleanupSettings,
+    MATERIAL_OT_clean_unused_empty_slots,
+    MATERIAL_PT_slot_cleanup,
+)
+
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+    bpy.types.Scene.material_slot_cleanup_settings = PointerProperty(
+        type=MaterialSlotCleanupSettings,
     )
 
-print("Done: removed unused material slots, empty material slots, and purged orphan data.")
+
+def unregister():
+    del bpy.types.Scene.material_slot_cleanup_settings
+
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
+
+if __name__ == "__main__":
+    register()
