@@ -16,7 +16,7 @@ Blender add-on for cleaning material slots and unused data.
 
 ## 使用方式
 
-1. 在 Blender 安裝並啟用 `remove_unused_empty_materials.py`
+1. 在 Blender 安裝並啟用 `material_slot_cleanup_for_blender.py`
 2. 選取要清理的 Mesh 物件
 3. 到 Material Properties 開啟 Material Slot Cleanup 面板
 4. 視需求勾選 Purge Orphan Data
